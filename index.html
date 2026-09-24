@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Control de Abordaje - Campus Puebla</title>
+
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px 16px;
+      font-family: Arial, sans-serif;
+      background: #f5f6f8;
+      color: #222;
+      text-align: center;
+    }
+
+    h1 {
+      margin-bottom: 5px;
+      font-size: 28px;
+    }
+
+    .subtitulo {
+      color: #666;
+      margin-bottom: 25px;
+    }
+
+    .contenedor {
+      max-width: 520px;
+      margin: auto;
+    }
+
+    label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    select,
+    input,
+    button {
+      width: 100%;
+      max-width: 420px;
+      padding: 14px;
+      margin: 8px auto;
+      font-size: 17px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      box-sizing: border-box;
+    }
+
+    button {
+      background: #111;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      background: #888;
+      cursor: default;
+    }
+
+    #reader {
+      width: 100%;
+      max-width: 420px;
+      margin: 20px auto;
+      background: white;
+      border-radius: 15px;
+      overflow: hidden;
+    }
+
+    #resultado {
+      display: none;
+      max-width: 420px;
+      margin: 20px auto;
+      padding: 20px;
+      border-radius: 15px;
+      background: white;
+    }
+
+    .exito {
+      border: 3px solid #16a34a;
+    }
+
+    .error {
+      border: 3px solid #dc2626;
+    }
+
+    .alerta {
+      border: 3px solid #f59e0b;
+    }
+
+    .tituloResultado {
+      font-size: 21px;
+      font-weight: bold;
+      margin-bottom: 12px;
+    }
+
+    .dato {
+      margin: 7px 0;
+    }
+
+    .separador {
+      height: 1px;
+      background: #ddd;
+      margin: 28px 0;
+    }
+
+    .estadoCamara {
+      color: #666;
+      font-size: 14px;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="contenedor">
+
+    <h1>Control de Abordaje</h1>
+    <div class="subtitulo">Visita Campus Puebla</div>
+
+    <label for="autobus">
+      Selecciona el autobús que estás controlando
+    </label>
+
+    <select id="autobus">
+      <option value="1">🚌 Autobús 1</option>
+      <option value="2">🚌 Autobús 2</option>
+    </select>
+
+    <div id="resultado"></div>
+
+    <button id="btnIniciar" onclick="iniciarEscaner()">
+      📷 Iniciar escáner
+    </button>
+
+    <button id="btnDetener" onclick="detenerEscaner()" disabled>
+      Detener escáner
+    </button>
+
+    <div id="reader"></div>
+
+    <div id="estadoCamara" class="estadoCamara">
+      La cámara se activará al iniciar el escáner.
+    </div>
+
+    <div class="separador"></div>
+
+    <h3>¿Problemas con el QR?</h3>
+
+    <p style="color:#666;">
+      También puedes introducir manualmente el ID.
+    </p>
+
+    <input
+      type="text"
+      id="idManual"
+      placeholder="Ej. PUE001"
+      autocomplete="off"
+    >
+
+    <button onclick="registrarManual()">
+      Registrar manualmente
+    </button>
+
+  </div>
+
+<script>
+
+  /*
+   * URL DE NUESTRO GOOGLE APPS SCRIPT
+   */
+  const API_URL =
+    "https://script.google.com/macros/s/AKfycbzTuqdeFLrxDLQ7PfYuvTLxyVsgs44KSjMTF1Al-mLugvS33LO5psfSign6wimqSSrp/exec";
+
+
+  let html5QrCode = null;
+  let procesando = false;
+
+
+  /*
+   * INICIAR ESCÁNER
+   */
+  async function iniciarEscaner() {
+
+    if (html5QrCode) {
+      return;
+    }
+
+    document.getElementById("estadoCamara").textContent =
+      "Solicitando acceso a la cámara...";
+
+    try {
+
+      html5QrCode = new Html5Qrcode("reader");
+
+      const configuracion = {
+        fps: 10,
+        qrbox: {
+          width: 250,
+          height: 250
+        },
+        aspectRatio: 1.0
+      };
+
+      await html5QrCode.start(
+        {
+          facingMode: "environment"
+        },
+        configuracion,
+        onScanSuccess,
+        onScanFailure
+      );
+
+      document.getElementById("btnIniciar").disabled = true;
+      document.getElementById("btnDetener").disabled = false;
+
+      document.getElementById("estadoCamara").textContent =
+        "📷 Cámara activa. Apunta al código QR.";
+
+    } catch (error) {
+
+      console.error(error);
+
+      html5QrCode = null;
+
+      mostrarResultado(
+        "error",
+        "NO SE PUDO ACTIVAR LA CÁMARA",
+        "Verifica que Safari tenga permiso para utilizar la cámara."
+      );
+
+      document.getElementById("estadoCamara").textContent =
+        "No fue posible activar la cámara.";
+
+    }
+  }
+
+
+  /*
+   * CUANDO SE DETECTA UN QR
+   */
+  function onScanSuccess(decodedText) {
+
+    if (procesando) {
+      return;
+    }
+
+    procesando = true;
+
+    const id = String(decodedText).trim();
+
+    detenerEscaner();
+
+    registrarID(id);
+  }
+
+
+  /*
+   * ERRORES NORMALES DEL ESCÁNER
+   */
+  function onScanFailure(error) {
+    // No hacemos nada.
+    // Estos errores son normales mientras busca un QR.
+  }
+
+
+  /*
+   * DETENER ESCÁNER
+   */
+  async function detenerEscaner() {
+
+    if (!html5QrCode) {
+      return;
+    }
+
+    try {
+      await html5QrCode.stop();
+      html5QrCode.clear();
+    } catch (error) {
+      console.log(error);
+    }
+
+    html5QrCode = null;
+
+    document.getElementById("btnIniciar").disabled = false;
+    document.getElementById("btnDetener").disabled = true;
+
+    document.getElementById("estadoCamara").textContent =
+      "Cámara detenida.";
+  }
+
+
+  /*
+   * REGISTRO MANUAL
+   */
+  function registrarManual() {
+
+    const campo = document.getElementById("idManual");
+
+    const id = campo.value.trim();
+
+    if (!id) {
+
+      mostrarResultado(
+        "error",
+        "FALTA EL ID",
+        "Introduce un ID como PUE001."
+      );
+
+      return;
+    }
+
+    registrarID(id);
+  }
+
+
+  /*
+   * ENVIAR ID A GOOGLE APPS SCRIPT
+   */
+  function registrarID(id) {
+
+    const autobus =
+      document.getElementById("autobus").value;
+
+    mostrarResultado(
+      "alerta",
+      "PROCESANDO...",
+      "Verificando " + id + "..."
+    );
+
+    const callbackName =
+      "respuestaQR_" + Date.now();
+
+    window[callbackName] = function(respuesta) {
+
+      try {
+
+        procesarRespuesta(respuesta);
+
+      } finally {
+
+        delete window[callbackName];
+
+        const script =
+          document.getElementById(callbackName);
+
+        if (script) {
+          script.remove();
+        }
+      }
+    };
+
+
+    const url =
+      API_URL +
+      "?action=registrar" +
+      "&id=" + encodeURIComponent(id) +
+      "&autobus=" + encodeURIComponent(autobus) +
+      "&callback=" + encodeURIComponent(callbackName);
+
+
+    const script = document.createElement("script");
+
+    script.id = callbackName;
+    script.src = url;
+
+    script.onerror = function() {
+
+      delete window[callbackName];
+      script.remove();
+
+      procesando = false;
+
+      mostrarResultado(
+        "error",
+        "ERROR DE CONEXIÓN",
+        "No fue posible comunicarse con el sistema."
+      );
+    };
+
+    document.body.appendChild(script);
+  }
+
+
+  /*
+   * PROCESAR RESPUESTA DEL SISTEMA
+   */
+  function procesarRespuesta(respuesta) {
+
+    procesando = false;
+
+    if (!respuesta) {
+
+      mostrarResultado(
+        "error",
+        "ERROR",
+        "No se recibió respuesta del sistema."
+      );
+
+      return;
+    }
+
+
+    if (respuesta.tipo === "exito") {
+
+      mostrarResultado(
+        "exito",
+        "✓ ABORDAJE REGISTRADO",
+        `
+          <div class="dato">${respuesta.nombre}</div>
+          <div class="dato">${respuesta.escuela}</div>
+          <div class="dato">🚌 Autobús ${respuesta.autobus}</div>
+          <div class="dato">💺 Asiento ${respuesta.asiento}</div>
+        `
+      );
+
+      document.getElementById("idManual").value = "";
+
+      return;
+    }
+
+
+    if (respuesta.tipo === "duplicado") {
+
+      mostrarResultado(
+        "alerta",
+        "⚠️ YA HABÍA ABORDADO",
+        `
+          <div class="dato">${respuesta.nombre}</div>
+          <div class="dato">${respuesta.escuela}</div>
+          <div class="dato">🚌 Autobús ${respuesta.autobus}</div>
+          <div class="dato">💺 Asiento ${respuesta.asiento}</div>
+          <div class="dato">
+            🕐 ${respuesta.hora || ""}
+          </div>
+        `
+      );
+
+      return;
+    }
+
+
+    if (respuesta.tipo === "incorrecto") {
+
+      mostrarResultado(
+        "error",
+        "✕ AUTOBÚS INCORRECTO",
+        `
+          <div class="dato">${respuesta.nombre}</div>
+          <div class="dato">${respuesta.escuela}</div>
+          <div class="dato">
+            Debe abordar en el Autobús ${respuesta.autobus}
+          </div>
+          <div class="dato">
+            💺 Asiento ${respuesta.asiento}
+          </div>
+        `
+      );
+
+      return;
+    }
+
+
+    if (respuesta.tipo === "no_encontrado") {
+
+      mostrarResultado(
+        "error",
+        "✕ ID NO ENCONTRADO",
+        "El código no corresponde a ningún asistente registrado."
+      );
+
+      return;
+    }
+
+
+    mostrarResultado(
+      "error",
+      "ERROR DEL SISTEMA",
+      "Respuesta desconocida."
+    );
+  }
+
+
+  /*
+   * MOSTRAR RESULTADO
+   */
+  function mostrarResultado(tipo, titulo, contenido) {
+
+    const resultado =
+      document.getElementById("resultado");
+
+    resultado.className = tipo;
+
+    resultado.innerHTML =
+      '<div class="tituloResultado">' +
+      titulo +
+      '</div>' +
+      '<div>' +
+      contenido +
+      '</div>';
+
+    resultado.style.display = "block";
+  }
+
+</script>
+
+</body>
+</html>
